@@ -26,6 +26,10 @@ function Puzzles() {
     const [info, setInfo] = useState<string>("Welcome to puzzles");
     const [playerColor, setPlayerColor] = useState<string>('');
     const [themeList, setThemeList] = useState<string[]>([]);
+    const [mentorId, setMentorId] = useState<string>('');
+    const [studentId, setStudentId] = useState<string>('');
+    const [role, setRole] = useState<string>('mentor');
+    const [connected, setConnected] = useState<boolean>(false);
 
     const postToBoard = (msg: any) => {
     const board = chessboard.current;
@@ -98,7 +102,7 @@ function Puzzles() {
       }, 300);
   };
 
-    const setStateAsActive = (state: any) => {
+    const setStateAsActive = (state: any, broadcast: boolean = false) => {
         if (!state?.FEN || !state?.Moves || !state?.Themes) {
             console.warn("Puzzle is missing required fields:", state);
             return;
@@ -121,11 +125,41 @@ function Puzzles() {
 
         setTimeout(() => {
             currentPuzzle = state;
-            startLesson(firstObj);
+            startLesson(firstObj, broadcast);
         }, 200);
     };
 
-    const startLesson = ({ theme, fen, event }: { theme: string, fen: string, event: string }) => {
+    const connectToPartner = () => {
+        const board = chessboard.current;
+        if (!board || !board.contentWindow) return;
+        board.contentWindow.postMessage(
+            JSON.stringify({ command: 'userinfo', mentor: mentorId, student: studentId, role }),
+            chessClientURL
+        );
+        const sessionId = `${mentorId}-${studentId}`;
+
+        board.contentWindow.postMessage(
+        JSON.stringify({
+            command: role === "mentor" ? "createSession" : "joinSession",
+            sessionId,
+            username: role === "mentor" ? mentorId : studentId,
+            role
+        }),
+        chessClientURL
+        );
+
+        setConnected(true);
+        if (currentPuzzle) {
+            setStateAsActive(currentPuzzle);
+        }
+    };
+
+    const startLesson = ({ theme, fen, event }: { theme: string, fen: string, event: string }, broadcast: boolean = false) => {
+        if (broadcast && !connected) {
+            console.warn("Broadcast requested but not connected. Ignoring.");
+            broadcast = false;
+        }
+
         if (!fen || fen.split("/").length !== 8) {
             console.warn("Invalid or missing FEN:", fen);
             return;
@@ -157,7 +191,8 @@ function Puzzles() {
         FEN: fen,
         Moves: currentPuzzle?.Moves,
         Rating: currentPuzzle?.Rating,
-        Themes: currentPuzzle?.Themes
+        Themes: currentPuzzle?.Themes,
+        broadcast
         });
 
 
@@ -311,6 +346,13 @@ function Puzzles() {
             if (typeof info === 'string' && info[0] === "{") {
                 try {
                     let jsonInfo = JSON.parse(info);
+                    if (jsonInfo.puzzle) {
+                        const puzzle = jsonInfo.puzzle;
+                        setThemeList(puzzle.Themes.split(' '));
+                        setStateAsActive(puzzle, false);
+                        updateInfoBox(puzzle.Themes.split(' '));
+                        return;
+                    }
                     if (
                         "from" in jsonInfo && "to" in jsonInfo &&
                         typeof jsonInfo.from === 'string' && typeof jsonInfo.to === 'string' &&
@@ -385,6 +427,16 @@ function Puzzles() {
     return (
         <div id="mainElements">
             <iframe ref={chessboard} src={chessClientURL} title="board" id="chessBoard"></iframe>
+
+            <div id="connectMenu">
+                <input placeholder="Mentor ID" value={mentorId} onChange={e => setMentorId(e.target.value)} />
+                <input placeholder="Student ID" value={studentId} onChange={e => setStudentId(e.target.value)} />
+                <select value={role} onChange={e => setRole(e.target.value)}>
+                    <option value="mentor">Mentor</option>
+                    <option value="student">Student</option>
+                </select>
+                <button onClick={connectToPartner} disabled={connected}>Connect</button>
+            </div>
 
             <div id="hintMenu">
                 <button 

@@ -11,6 +11,27 @@ const app = express();
 const server = http.createServer(app);
 const { Chess } = require("chess.js"); // Needed for board state logic
 const ongoingGames = [];
+const sessions = {};
+
+function findCurrentGameBySocket(socketId) {
+  // Check ongoingGames first (classic pairing)
+  for (const game of ongoingGames) {
+    if (game.student?.id === socketId || game.mentor?.id === socketId) {
+      return game;
+    }
+  }
+
+  // Check session-based games
+  for (const sessionId in sessions) {
+    const session = sessions[sessionId];
+    if (session.student?.id === socketId || session.mentor?.id === socketId) {
+      return session;
+    }
+  }
+
+  return null;
+}
+
 
 // Add logging functionaility to the server
 app.use(morgan("dev")) // dev -> preset format
@@ -148,26 +169,98 @@ io.on("connection", (socket) => {
     
   });
 
+  socket.on("createSession", (msg) => {
+  try {
+    const { sessionId, username, role } = JSON.parse(msg);
+
+    if (sessions[sessionId]) {
+      socket.emit("error", `Session "${sessionId}" already exists.`);
+      return;
+    }
+
+    const chessState = new Chess();
+    const color = role === "mentor" ? "white" : "black";
+
+    sessions[sessionId] = {
+      boardState: chessState,
+      pastStates: [],
+      [role]: { username, id: socket.id, color }
+    };
+
+    socket.join(sessionId);
+    socket.emit("sessionCreated", JSON.stringify({
+      boardState: chessState.fen(),
+      color
+    }));
+
+    console.log(`Created session ${sessionId} by ${username} as ${role}`);
+  } catch (err) {
+    console.error("Error in createSession:", err);
+    socket.emit("error", "Invalid createSession payload");
+  }
+});
+
+socket.on("joinSession", (msg) => {
+  try {
+    const { sessionId, username, role } = JSON.parse(msg);
+
+    const session = sessions[sessionId];
+    if (!session) {
+      socket.emit("error", `Session "${sessionId}" not found.`);
+      return;
+    }
+
+    if (session[role]) {
+      socket.emit("error", `Role "${role}" is already taken.`);
+      return;
+    }
+
+    const color = role === "mentor" ? "white" : "black";
+    session[role] = { username, id: socket.id, color };
+
+    socket.join(sessionId);
+
+    // Notify this user
+    socket.emit("sessionJoined", JSON.stringify({
+      boardState: session.boardState.fen(),
+      color
+    }));
+
+    // Notify both users with latest board state
+    if (session.mentor && session.student) {
+      io.to(session.mentor.id).emit("boardstate", JSON.stringify({
+        boardState: session.boardState.fen(),
+        color: session.mentor.color
+      }));
+      io.to(session.student.id).emit("boardstate", JSON.stringify({
+        boardState: session.boardState.fen(),
+        color: session.student.color
+      }));
+    }
+
+    console.log(`${username} joined session ${sessionId} as ${role}`);
+  } catch (err) {
+    console.error("Error in joinSession:", err);
+    socket.emit("error", "Invalid joinSession payload");
+  }
+});
+
+
   /// Purpose: Changes state of existing game.
   /// Input: { from: e2, to: e3 }
   /// Output: { boardState: string (e.g., "initial_board_state"), color: string ("black"/"white") }
   socket.on("move", (msg) => {
     
-    let currentGame;
-    var clientSocket = socket.id;
     console.log(msg);
 
     parsedmsg = JSON.parse(msg);
-    move = parsedmsg.move;
 
     // checking student/mentor is in an ongoing game
-    for (let game of ongoingGames) {
-      
-      if (game.student.id == clientSocket || game.mentor.id == clientSocket) {
-        newGame = false;
-        currentGame = game;
-        break;  // breaks early, since we no longer need to go through this loop
-      }
+    var clientSocket = socket.id;
+    const currentGame = findCurrentGameBySocket(socket.id);
+    if (!currentGame) {
+      console.log("No game found for socket", socket.id);
+      return;
     }
 
     if (currentGame)
@@ -250,24 +343,17 @@ io.on("connection", (socket) => {
   /// Output: { success: boolean (true/false), moveId: string (e.g., "move123") }
 
   socket.on("undo", (msg) => {
-    
-    let currentGame;
-    var clientSocket = socket.id;
-
+  
     console.log(msg);
 
     parsedmsg = JSON.parse(msg);
-    
-    move = parsedmsg.move;
 
     // checking student/mentor is in an ongoing game
-    for (let game of ongoingGames) {
-      
-      if (game.student.id == clientSocket || game.mentor.id == clientSocket) {
-        newGame = false;
-        currentGame = game;
-        break;  // breaks early, since we no longer need to go through this loop
-      }
+    var clientSocket = socket.id;
+    const currentGame = findCurrentGameBySocket(socket.id);
+    if (!currentGame) {
+      console.log("No game found for socket", socket.id);
+      return;
     }
 
     if (currentGame)
@@ -302,8 +388,7 @@ io.on("connection", (socket) => {
 
   socket.on("setstate", (msg) => {
 
-    let currentGame;
-    var clientSocket = socket.id;
+    
 
     console.log(msg);
 
@@ -312,19 +397,11 @@ io.on("connection", (socket) => {
     state = parsedmsg.state;
 
     // checking student/mentor is in an ongoing game
-    for (let game of ongoingGames) {
-      
-      if (game.student.id == clientSocket || game.mentor.id == clientSocket) {
-        
-        currentGame = game;
-        break;  // breaks early, since we no longer need to go through this loop
-      }
-    }
+    const currentGame = findCurrentGameBySocket(socket.id);
+    if (!currentGame) return;
 
-    if (currentGame)
-    {
-      currentGame.boardState = state;
-    }
+    currentGame.boardState = new Chess(state);
+
 
     io.to(currentGame.mentor.id).emit(
       "boardstate",
@@ -341,22 +418,11 @@ io.on("connection", (socket) => {
   });
 
   socket.on("lastmove", (msg) => {
-    let currentGame;
     var clientSocket = socket.id;
-
-    // checking student/mentor is in an ongoing game
-    for (let game of ongoingGames) {
-      if (game.student.id == clientSocket || game.mentor.id == clientSocket) {
-        newGame = false;
-        currentGame = game;
-        break;
-      }
-    }
-
-    // Add this check to prevent the error
+    const currentGame = findCurrentGameBySocket(socket.id);
     if (!currentGame) {
-      console.log(`No ongoing game found for socket ${clientSocket}`);
-      return; // Exit early if no game is found
+      console.log("No game found for socket", socket.id);
+      return;
     }
 
     // getting message variables
@@ -398,18 +464,11 @@ io.on("connection", (socket) => {
   });
 
   socket.on("addgrey", (msg) => {
-    
-    let currentGame;
     var clientSocket = socket.id;
-
-    // checking student/mentor is in an ongoing game
-    for (let game of ongoingGames) {
-      
-      if (game.student.id == clientSocket || game.mentor.id == clientSocket) {
-        newGame = false;
-        currentGame = game;
-        break;  // breaks early, since we no longer need to go through this loop
-      }
+    const currentGame = findCurrentGameBySocket(socket.id);
+    if (!currentGame) {
+      console.log("No game found for socket", socket.id);
+      return;
     }
 
     // getting message variables
@@ -443,18 +502,11 @@ io.on("connection", (socket) => {
 
   
   socket.on("removegrey", (msg) => {
-    
-    let currentGame;
     var clientSocket = socket.id;
-
-    // checking student/mentor is in an ongoing game
-    for (let game of ongoingGames) {
-      
-      if (game.student.id == clientSocket || game.mentor.id == clientSocket) {
-        newGame = false;
-        currentGame = game;
-        break;  // breaks early, since we no longer need to go through this loop
-      }
+    const currentGame = findCurrentGameBySocket(socket.id);
+    if (!currentGame) {
+      console.log("No game found for socket", socket.id);
+      return;
     }
 
     // getting message variables
@@ -489,18 +541,11 @@ io.on("connection", (socket) => {
   }); 
   
   socket.on("mousexy", (msg) => {
-    
-    let currentGame;
     var clientSocket = socket.id;
-
-    // checking student/mentor is in an ongoing game
-    for (let game of ongoingGames) {
-      
-      if (game.student.id == clientSocket || game.mentor.id == clientSocket) {
-        newGame = false;
-        currentGame = game;
-        break;  // breaks early, since we no longer need to go through this loop
-      }
+    const currentGame = findCurrentGameBySocket(socket.id);
+    if (!currentGame) {
+      console.log("No game found for socket", socket.id);
+      return;
     }
 
     // getting message variables
@@ -537,17 +582,11 @@ io.on("connection", (socket) => {
 
   socket.on("piecedrop", (msg) => {
     console.log('dropping piece');
-    let currentGame;
     var clientSocket = socket.id;
-
-    // checking student/mentor is in an ongoing game
-    for (let game of ongoingGames) {
-      
-      if (game.student.id == clientSocket || game.mentor.id == clientSocket) {
-        newGame = false;
-        currentGame = game;
-        break;  // breaks early, since we no longer need to go through this loop
-      }
+    const currentGame = findCurrentGameBySocket(socket.id);
+    if (!currentGame) {
+      console.log("No game found for socket", socket.id);
+      return;
     }
 
     // getting message variables
@@ -582,17 +621,11 @@ io.on("connection", (socket) => {
 
   socket.on("piecedrag", (msg) => {
     console.log('dragging piece');
-    let currentGame;
     var clientSocket = socket.id;
-
-    // checking student/mentor is in an ongoing game
-    for (let game of ongoingGames) {
-      
-      if (game.student.id == clientSocket || game.mentor.id == clientSocket) {
-        newGame = false;
-        currentGame = game;
-        break;  // breaks early, since we no longer need to go through this loop
-      }
+    const currentGame = findCurrentGameBySocket(socket.id);
+    if (!currentGame) {
+      console.log("No game found for socket", socket.id);
+      return;
     }
 
     // getting message variables
@@ -628,17 +661,11 @@ io.on("connection", (socket) => {
 
   socket.on("highlight", (msg) => {
     console.log('getting highlight future move');
-    let currentGame;
     var clientSocket = socket.id;
-
-    // checking student/mentor is in an ongoing game
-    for (let game of ongoingGames) {
-      
-      if (game.student.id == clientSocket || game.mentor.id == clientSocket) {
-        newGame = false;
-        currentGame = game;
-        break;  // breaks early, since we no longer need to go through this loop
-      }
+    const currentGame = findCurrentGameBySocket(socket.id);
+    if (!currentGame) {
+      console.log("No game found for socket", socket.id);
+      return;
     }
 
     // getting message variables

@@ -120,6 +120,19 @@ const registerSocketHandlers = (socket, io) => {
         "piecedrop",
         "highlight"
     ];
+    // Handle puzzle selection and broadcast to opponent
+    socket.on("puzzle", (msg) => {
+        try {
+            const puzzle = JSON.parse(msg);
+            if (puzzle && puzzle.FEN) {
+                const result = gameManager.setBoardState(socket.id, puzzle.FEN);
+                gameManager.broadcastBoardState(result, io);
+                gameManager.relayToOpponent(socket.id, "puzzle", puzzle, io);
+            }
+        } catch (err) {
+            socket.emit("error", err.message);
+        }
+    });
 
     // Generic relay handler
     relayEvents.forEach((eventName) => {

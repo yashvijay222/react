@@ -169,6 +169,12 @@ function sendGreySquare(to)
   socket.emit("addgrey", JSON.stringify(data)); 
 }
 
+function sendSetState(fen)
+{
+  var data = {"state": fen, "mentor": mentor, "student": student};
+  socket.emit("setstate", JSON.stringify(data));
+}
+
 function sendPieceDrag(piece)
 {
   console.log("sending drag");
@@ -210,6 +216,52 @@ socket.on('boardstate', (msg) => {
     // update visuals of chessboard
     board.position(currentState.fen());
 });
+
+socket.on('sessionCreated', (msg) => {
+  const parsed = JSON.parse(msg);
+  console.log("Session created:", parsed);
+
+  currentState = new Chess(parsed.boardState);
+  playerColor = parsed.color;
+
+  config.orientation = playerColor;
+  board = Chessboard("myBoard", config);
+  board.position(currentState.fen());
+});
+
+socket.on('sessionJoined', (msg) => {
+  const parsed = JSON.parse(msg);
+  console.log("Joined session:", parsed);
+
+  currentState = new Chess(parsed.boardState);
+  playerColor = parsed.color;
+
+  config.orientation = playerColor;
+  board = Chessboard("myBoard", config);
+  board.position(currentState.fen());
+});
+
+
+// Load puzzle details sent by the server
+socket.on('puzzle', (msg) => {
+  try {
+    const puzzle = JSON.parse(msg);
+    if (puzzle.FEN) {
+      currentState.load(puzzle.FEN);
+      board.position(puzzle.FEN);
+      const parts = puzzle.FEN.split(' ');
+      const activeColor = parts[1];
+      board.orientation(activeColor === 'w' ? 'black' : 'white');
+      // inform parent page of the new puzzle so UI can update
+      sendToParent(JSON.stringify({ puzzle }));
+      sendToParent(currentState.fen());
+    }
+  } catch (err) {
+    console.error('Failed to load puzzle from server:', err);
+  }
+});
+
+
 
 socket.on('piecedrag', (msg) => {
 
@@ -331,6 +383,20 @@ eventer(
     // get command from parent and send to server
     var command = data.command;
     if (command == "newgame") { sendNewGame(); }
+    else if (command === "createSession") {
+      socket.emit("createSession", JSON.stringify({
+        sessionId: data.sessionId,
+        username: data.username,
+        role: data.role
+      }));
+    }
+    else if (command === "joinSession") {
+      socket.emit("joinSession", JSON.stringify({
+        sessionId: data.sessionId,
+        username: data.username,
+        role: data.role
+      }));
+    }
     else if (command == "endgame") {
       // delete game on server
       sendEndGame(); 
@@ -361,7 +427,51 @@ eventer(
         const activeColor = parts[1]; // safer than direct index
         board.orientation(activeColor === 'w' ? 'black' : 'white');
 
-        sendToParent(currentState.fen());
+        // notify parent of puzzle selection
+        if (data.broadcast) {
+          sendToParent(JSON.stringify({
+            puzzle: {
+              PuzzleId: data.PuzzleId,
+              FEN: data.FEN,
+              Moves: data.Moves,
+              Rating: data.Rating,
+              Themes: data.Themes
+            }
+          }));
+          sendToParent(currentState.fen());
+
+          socket.emit('puzzle', JSON.stringify({
+            PuzzleId: data.PuzzleId,
+            FEN: data.FEN,
+            Moves: data.Moves,
+            Rating: data.Rating,
+            Themes: data.Themes
+          }));
+        }
+
+        sendSetState(data.FEN);
+        if (data.broadcast) {
+          sendToParent(JSON.stringify({
+            puzzle: {
+              PuzzleId: data.PuzzleId,
+              FEN: data.FEN,
+              Moves: data.Moves,
+              Rating: data.Rating,
+              Themes: data.Themes
+            }
+          }));
+          sendToParent(currentState.fen());
+
+          socket.emit('puzzle', JSON.stringify({
+            PuzzleId: data.PuzzleId,
+            FEN: data.FEN,
+            Moves: data.Moves,
+            Rating: data.Rating,
+            Themes: data.Themes
+          }));
+        }
+
+    sendSetState(data.FEN);
       } catch (err) {
         console.error("Invalid FEN received for puzzle:", data.FEN, err);
       }
