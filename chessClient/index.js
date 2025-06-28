@@ -261,6 +261,10 @@ socket.on('puzzle', (msg) => {
   }
 });
 
+socket.on('puzzleComplete', () => {
+  sendToParent(JSON.stringify({ event: 'puzzleComplete' }));
+});
+
 
 
 socket.on('piecedrag', (msg) => {
@@ -396,6 +400,9 @@ eventer(
         username: data.username,
         role: data.role
       }));
+    }
+    else if (command === "puzzleComplete") {
+      socket.emit("puzzleComplete", JSON.stringify({}));
     }
     else if (command == "endgame") {
       // delete game on server

@@ -13,6 +13,15 @@ const { Chess } = require("chess.js"); // Needed for board state logic
 const ongoingGames = [];
 const sessions = {};
 
+// Safely emit to a socket if it exists
+function safeEmit(socketId, event, payload) {
+  if (!socketId) return;
+  const s = io.sockets.sockets.get(socketId);
+  if (s) {
+    s.emit(event, payload);
+  }
+}
+
 function findCurrentGameBySocket(socketId) {
   // Check ongoingGames first (classic pairing)
   for (const game of ongoingGames) {
@@ -228,14 +237,22 @@ socket.on("joinSession", (msg) => {
 
     // Notify both users with latest board state
     if (session.mentor && session.student) {
-      io.to(session.mentor.id).emit("boardstate", JSON.stringify({
-        boardState: session.boardState.fen(),
-        color: session.mentor.color
-      }));
-      io.to(session.student.id).emit("boardstate", JSON.stringify({
-        boardState: session.boardState.fen(),
-        color: session.student.color
-      }));
+      safeEmit(
+        session.mentor.id,
+        "boardstate",
+        JSON.stringify({
+          boardState: session.boardState.fen(),
+          color: session.mentor.color,
+        })
+      );
+      safeEmit(
+        session.student.id,
+        "boardstate",
+        JSON.stringify({
+          boardState: session.boardState.fen(),
+          color: session.student.color,
+        })
+      );
     }
 
     console.log(`${username} joined session ${sessionId} as ${role}`);
@@ -289,16 +306,17 @@ socket.on("joinSession", (msg) => {
       // broadcast current board state to mentor and student
       
       
-      io.to(currentGame.mentor.id).emit(
+      safeEmit(
+        currentGame.mentor?.id,
         "boardstate",
-        JSON.stringify({ boardState: currentGame.boardState.fen()})
-
+        JSON.stringify({ boardState: currentGame.boardState.fen() })
       );
 
-      io.to(currentGame.student.id).emit(
+      safeEmit(
+        currentGame.student?.id,
         "boardstate",
-        JSON.stringify({boardState: currentGame.boardState.fen()})
-      )
+        JSON.stringify({ boardState: currentGame.boardState.fen() })
+      );
 
     }
 
@@ -320,13 +338,9 @@ socket.on("joinSession", (msg) => {
         game.mentor.username == parsedmsg.mentor
       ) {
 
-        io.to(game.mentor.id).emit(
-          "reset"
-        );
-    
-        io.to(game.student.id).emit(
-          "reset"
-        );
+        safeEmit(game.mentor?.id, "reset", undefined);
+
+        safeEmit(game.student?.id, "reset", undefined);
 
         ongoingGames.splice(index, 1);
         console.log(ongoingGames);
@@ -368,14 +382,16 @@ socket.on("joinSession", (msg) => {
       console.log(currentGame.boardState.fen());
 
       // broadcast current board state to mentor and student
-      io.to(currentGame.mentor.id).emit(
+      safeEmit(
+        currentGame.mentor?.id,
         "boardstate",
-        JSON.stringify({ boardState: currentGame.boardState.fen()})
+        JSON.stringify({ boardState: currentGame.boardState.fen() })
       );
 
-      io.to(currentGame.student.id).emit(
+      safeEmit(
+        currentGame.student?.id,
         "boardstate",
-        JSON.stringify({boardState: currentGame.boardState.fen()})
+        JSON.stringify({ boardState: currentGame.boardState.fen() })
       );
 
       
@@ -403,15 +419,16 @@ socket.on("joinSession", (msg) => {
     currentGame.boardState = new Chess(state);
 
 
-    io.to(currentGame.mentor.id).emit(
+    safeEmit(
+      currentGame.mentor?.id,
       "boardstate",
-      JSON.stringify({ boardState: currentGame.boardState.fen()})
-
+      JSON.stringify({ boardState: currentGame.boardState.fen() })
     );
 
-    io.to(currentGame.student.id).emit(
+    safeEmit(
+      currentGame.student?.id,
       "boardstate",
-      JSON.stringify({boardState: currentGame.boardState.fen()})
+      JSON.stringify({ boardState: currentGame.boardState.fen() })
     );
 
 
@@ -439,14 +456,16 @@ socket.on("joinSession", (msg) => {
       //if (validCoordinate(from.letter, from.number) && validCoordinate(to.letter, to.number))
       //{
               
-    io.to(currentGame.mentor.id).emit(
+    safeEmit(
+      currentGame.mentor?.id,
       "lastmove",
-      JSON.stringify({ from, to})
+      JSON.stringify({ from, to })
     );
 
-    io.to(currentGame.student.id).emit(
+    safeEmit(
+      currentGame.student?.id,
       "lastmove",
-      JSON.stringify({from, to})
+      JSON.stringify({ from, to })
     );
       //}
       //else
@@ -477,25 +496,13 @@ socket.on("joinSession", (msg) => {
 
     if (currentGame)
     {
-      if (currentGame.mentor.id != clientSocket)
-      {
-            
-        io.to(currentGame.mentor.id).emit(
-          "addgrey",
-          JSON.stringify({to})
-
-        );
-
-      }      
-      else if (currentGame.student.id != clientSocket)
-      {
-          
-        io.to(currentGame.student.id).emit(
-          "addgrey",
-          JSON.stringify({to})
-        );
+      if (currentGame.mentor.id != clientSocket) {
+        safeEmit(currentGame.mentor?.id, "addgrey", JSON.stringify({ to }));
+      } else if (currentGame.student.id != clientSocket) {
+        safeEmit(currentGame.student?.id, "addgrey", JSON.stringify({ to }));
+      } else {
+        console.log("bad request, no client to send greysquare to");
       }
-      else {console.log("bad request, no client to send greysquare to")}
     }
 
   }); 
@@ -516,25 +523,13 @@ socket.on("joinSession", (msg) => {
     if (currentGame)
     {
         
-      if (currentGame.mentor.id != clientSocket)
-        {
-              
-          io.to(currentGame.mentor.id).emit(
-            "removegrey",
-            JSON.stringify({})
-    
-          );
-    
-        }      
-        else if (currentGame.student.id != clientSocket)
-        {
-            
-          io.to(currentGame.student.id).emit(
-            "removegrey",
-            JSON.stringify({})
-          );
-        }
-        else {console.log("bad request, no client to send greysquare to")}
+      if (currentGame.mentor.id != clientSocket) {
+        safeEmit(currentGame.mentor?.id, "removegrey", JSON.stringify({}));
+      } else if (currentGame.student.id != clientSocket) {
+        safeEmit(currentGame.student?.id, "removegrey", JSON.stringify({}));
+      } else {
+        console.log("bad request, no client to send greysquare to");
+      }
     }
    
 
@@ -556,25 +551,13 @@ socket.on("joinSession", (msg) => {
     if (currentGame)
     {
         
-      if (currentGame.mentor.id != clientSocket)
-        {
-              
-          io.to(currentGame.mentor.id).emit(
-            "mousexy",
-            JSON.stringify({"x":x, "y":y})
-    
-          );
-    
-        }      
-        else if (currentGame.student.id != clientSocket)
-        {
-            
-          io.to(currentGame.student.id).emit(
-            "mousexy",
-            JSON.stringify({"x":x, "y":y})
-          );
-        }
-        else {console.log("bad request, no client to send mouse xy to")}
+      if (currentGame.mentor.id != clientSocket) {
+        safeEmit(currentGame.mentor?.id, "mousexy", JSON.stringify({ x, y }));
+      } else if (currentGame.student.id != clientSocket) {
+        safeEmit(currentGame.student?.id, "mousexy", JSON.stringify({ x, y }));
+      } else {
+        console.log("bad request, no client to send mouse xy to");
+      }
     }
    
 
@@ -595,25 +578,13 @@ socket.on("joinSession", (msg) => {
     if (currentGame)
     {
         
-      if (currentGame.mentor.id != clientSocket)
-        {
-              
-          io.to(currentGame.mentor.id).emit(
-            "piecedrop",
-            JSON.stringify({})
-    
-          );
-    
-        }      
-        else if (currentGame.student.id != clientSocket)
-        {
-            
-          io.to(currentGame.student.id).emit(
-            "piecedrop",
-            JSON.stringify({})
-          );
-        }
-        else {console.log("bad request, no client to send mouse xy to")}
+      if (currentGame.mentor.id != clientSocket) {
+        safeEmit(currentGame.mentor?.id, "piecedrop", JSON.stringify({}));
+      } else if (currentGame.student.id != clientSocket) {
+        safeEmit(currentGame.student?.id, "piecedrop", JSON.stringify({}));
+      } else {
+        console.log("bad request, no client to send mouse xy to");
+      }
     }
    
 
@@ -635,25 +606,13 @@ socket.on("joinSession", (msg) => {
     if (currentGame)
     {
         
-      if (currentGame.mentor.id != clientSocket)
-        {
-              
-          io.to(currentGame.mentor.id).emit(
-            "piecedrag",
-            JSON.stringify({"piece":piece})
-    
-          );
-    
-        }      
-        else if (currentGame.student.id != clientSocket)
-        {
-            
-          io.to(currentGame.student.id).emit(
-            "piecedrag",
-            JSON.stringify({"piece":piece})
-          );
-        }
-        else {console.log("bad request, no client to send mouse xy to")}
+      if (currentGame.mentor.id != clientSocket) {
+        safeEmit(currentGame.mentor?.id, "piecedrag", JSON.stringify({ piece }));
+      } else if (currentGame.student.id != clientSocket) {
+        safeEmit(currentGame.student?.id, "piecedrag", JSON.stringify({ piece }));
+      } else {
+        console.log("bad request, no client to send mouse xy to");
+      }
     }
    
 
@@ -676,25 +635,13 @@ socket.on("joinSession", (msg) => {
     if (currentGame)
     {
         
-      if (currentGame.mentor.id != clientSocket)
-        {
-              
-          io.to(currentGame.mentor.id).emit(
-            "highlight",
-            JSON.stringify({"from":from, "to":to})
-    
-          );
-    
-        }      
-        else if (currentGame.student.id != clientSocket)
-        {
-            
-          io.to(currentGame.student.id).emit(
-            "highlight",
-            JSON.stringify({"from":from, "to":to})
-          );
-        }
-        else {console.log("bad request, no client to send mouse xy to")}
+      if (currentGame.mentor.id != clientSocket) {
+        safeEmit(currentGame.mentor?.id, "highlight", JSON.stringify({ from, to }));
+      } else if (currentGame.student.id != clientSocket) {
+        safeEmit(currentGame.student?.id, "highlight", JSON.stringify({ from, to }));
+      } else {
+        console.log("bad request, no client to send mouse xy to");
+      }
     }
    
 

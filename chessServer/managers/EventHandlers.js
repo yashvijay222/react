@@ -118,7 +118,8 @@ const registerSocketHandlers = (socket, io) => {
         "mousexy",
         "piecedrag",
         "piecedrop",
-        "highlight"
+        "highlight",
+        "puzzleComplete"
     ];
     // Handle puzzle selection and broadcast to opponent
     socket.on("puzzle", (msg) => {

@@ -150,7 +150,7 @@ function Puzzles() {
 
         setConnected(true);
         if (currentPuzzle) {
-            setStateAsActive(currentPuzzle);
+            setStateAsActive(currentPuzzle, true);
         }
     };
 
@@ -235,7 +235,7 @@ function Puzzles() {
             console.warn("Skipping puzzle with invalid FEN:", nextPuzzle);
             return;
         }
-        setStateAsActive(nextPuzzle); // This will call startLesson
+        setStateAsActive(nextPuzzle, true); // This will call startLesson
         updateInfoBox(nextPuzzle.Themes.split(" "));
     };
 
@@ -346,6 +346,10 @@ function Puzzles() {
             if (typeof info === 'string' && info[0] === "{") {
                 try {
                     let jsonInfo = JSON.parse(info);
+                    if (jsonInfo.event === 'puzzleComplete') {
+                        Swal.fire('Puzzle completed', 'Good Job', 'success').then(() => getNextPuzzle());
+                        return;
+                    }
                     if (jsonInfo.puzzle) {
                         const puzzle = jsonInfo.puzzle;
                         setThemeList(puzzle.Themes.split(' '));
@@ -373,6 +377,7 @@ function Puzzles() {
 
                             if (moveList.length === 0) {
                                 isPuzzleEnd = true;
+                                postToBoard({ command: 'puzzleComplete', broadcast: true });
                                 setTimeout(() => {
                                     Swal.fire('Puzzle completed', 'Good Job', 'success').then(() => getNextPuzzle());
                                 }, 200);
